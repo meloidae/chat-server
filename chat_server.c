@@ -175,19 +175,19 @@ int main(int argc, char *argv[]) {
 
     // Read commandline arguments
     if (argc < 2) {
-        printf("the server port is set to default: %s\n", DEFAULT_PORT);
+        fprintf(stderr, "the server port is set to default: %s\n", DEFAULT_PORT);
         port = DEFAULT_PORT;
     } else {
         port = argv[1];
     } // else
 
     if (argc < 3) {
-        printf("the backlog for listen() is set to default: %i\n", DEFAULT_BACKLOG);
+        fprintf(stderr, "the backlog for listen() is set to default: %i\n", DEFAULT_BACKLOG);
         backlog = DEFAULT_BACKLOG;
     } else {
         backlog = atoi(argv[2]);
         if (backlog <= 0) {
-            printf("the backlog for listen() is invalid so it is set to default: %i\n", DEFAULT_BACKLOG);
+            fprintf(stderr, "the backlog for listen() is invalid so it is set to default: %i\n", DEFAULT_BACKLOG);
         } // if
     } // else
 
