@@ -36,7 +36,7 @@ typedef struct clientinfo {
 
 // Initialize the server socket and returns its fd
 int init_server_sockets(char *port, int backlog, cvector *server_socks) {
-    int sock, num_sock;
+    int sock, num_sock, yes = 1;
     struct addrinfo hints, *ai, *ai0;
     
     // Initialize addrinfo hints
@@ -46,7 +46,8 @@ int init_server_sockets(char *port, int backlog, cvector *server_socks) {
     hints.ai_socktype = SOCK_STREAM;
 
     // Get address info
-    if (int g = getaddrinfo(NULL, port, &hints, &ai0)) {
+    int g;
+    if (g = getaddrinfo(NULL, port, &hints, &ai0)) {
         fprintf(stderr, "%s\n", gai_strerror(g));
         exit(1);
     } // if
@@ -93,12 +94,12 @@ void server_loop(cvector *server_socks, cvector *client_socks) {
         perror("epoll_create");
         exit(1);
     } // if
-    memset(&ev, 0, sizeof(ev));
-    ev.events = EPOLLIN;
-    ev.data.ptr = malloc(sizeof(clientinfo));
     
     // Register server sockets to epoll
     for (int i = 0; i < server_socks->item_count; i++) {
+        memset(&ev, 0, sizeof(ev));
+        ev.events = EPOLLIN;
+        ev.data.ptr = malloc(sizeof(clientinfo));
         int fd = *((int *)cvector_get(server_socks, i));
         ((clientinfo *)ev.data.ptr)->fd = fd;
         if (epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &ev) < 0) {
@@ -125,14 +126,14 @@ void server_loop(cvector *server_socks, cvector *client_socks) {
 
             if (cvector_index_of(server_socks, &(ci->fd)) != -1) {
                 // Accept an incoming connection
-                int accept_sock = accept(ci->fd, (struct addr *)sock_storage, &sock_len);
+                int accept_sock = accept(ci->fd, (struct sockaddr *)&sock_storage, &sock_len);
                 if (accept_sock < 0) {
                     perror("accept");
                     exit(1);
                 } // if
                 fprintf(stderr, "Accepted connection: fd=%d\n", ci->fd);
 
-                // Add the accepted client socket to epoll
+                // Register client socket to epoll
                 memset(&ev, 0, sizeof(ev));
                 ev.events = EPOLLIN | EPOLLONESHOT;
                 ev.data.ptr = malloc(sizeof(clientinfo));
@@ -142,6 +143,8 @@ void server_loop(cvector *server_socks, cvector *client_socks) {
                     perror("epoll_ctl");
                     exit(1);
                 } // if
+
+                cvector_push(client_socks, &accept_sock);
             } else {
                 if (ev_ret[i].events & EPOLLIN) {
                     memset(read_buf, 0, sizeof(char) * BUFFER_SIZE);
@@ -170,7 +173,6 @@ int main(int argc, char *argv[]) {
     cvector *server_socks = cvector_init(sizeof(int), SERVER_SOCK_SIZE);
     cvector *client_socks = cvector_init(sizeof(int), INITIAL_CLIENT_SOCK_SIZE);
 
-
     // Read commandline arguments
     if (argc < 2) {
         printf("the server port is set to default: %s\n", DEFAULT_PORT);
@@ -193,6 +195,7 @@ int main(int argc, char *argv[]) {
 
     int ret = init_server_sockets(port, backlog, server_socks);
 
+    server_loop(server_socks, client_socks);
 
     cvector_free(client_socks);
     cvector_free(server_socks);

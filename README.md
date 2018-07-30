@@ -25,6 +25,8 @@ A chat-server application for the Network Computing course
         * R: refresh
             * retrieve possibly updated info from the server
         * T: toggle instructions
+        * Q: quit (disconnect)
+        * esc: back to normal mode
         * Scroll using updown & jk
 2. Chatroom
     * Commandline at the bottom 
