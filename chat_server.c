@@ -24,7 +24,6 @@
 #define DEFAULT_BACKLOG 5
 #define SERVER_SOCK_SIZE 5 
 #define INITIAL_CLIENT_SOCK_SIZE 5
-#define BUFFER_SIZE 1028
 #define EPOLL_FD_SIZE 100 // arbitrary
 #define EPOLL_MAX_EVENTS 100
 
@@ -82,12 +81,15 @@ int init_server_sockets(char *port, int backlog, cvector *server_socks) {
 
 } // init_server_sockets
 
-void server_loop(cvector *server_socks, cvector *client_socks) {
+void server_loop(cvector *server_socks, cvector *users) {
     int epfd;
     socklen_t sock_len;
     struct sockaddr_storage sock_storage; 
     struct epoll_event ev, ev_ret[EPOLL_MAX_EVENTS];
-    char read_buf[BUFFER_SIZE];
+    char recv_buffer[BUFFER_SIZE];
+    char send_buffer[BUFFER_SIZE];
+    chat_data send_data;
+    chat_data recv_data;
     // Initialize epoll
     epfd = epoll_create(EPOLL_MAX_EVENTS);
     if (epfd < 0) {
@@ -126,16 +128,17 @@ void server_loop(cvector *server_socks, cvector *client_socks) {
 
             if (cvector_index_of(server_socks, &(ci->fd)) != -1) {
                 // Accept an incoming connection
+                sock_len = sizeof(sock_storage);
                 int accept_sock = accept(ci->fd, (struct sockaddr *)&sock_storage, &sock_len);
                 if (accept_sock < 0) {
                     perror("accept");
                     exit(1);
                 } // if
-                fprintf(stderr, "Accepted connection: fd=%d\n", ci->fd);
+                fprintf(stderr, "Accepted connection: fd=%d\n", accept_sock);
 
                 // Register client socket to epoll
                 memset(&ev, 0, sizeof(ev));
-                ev.events = EPOLLIN | EPOLLONESHOT;
+                ev.events = EPOLLIN;
                 ev.data.ptr = malloc(sizeof(clientinfo));
                 ((clientinfo *)ev.data.ptr)->fd = accept_sock;
 
@@ -143,22 +146,33 @@ void server_loop(cvector *server_socks, cvector *client_socks) {
                     perror("epoll_ctl");
                     exit(1);
                 } // if
-
-                cvector_push(client_socks, &accept_sock);
+                add_user(users, accept_sock);
+                chat_data_set(&send_data, CHAT_NEW_MEMBER, find_user(users, accept_sock));
+                broadcast_to_users(users, &send_data, send_buffer);
             } else {
                 if (ev_ret[i].events & EPOLLIN) {
-                    memset(read_buf, 0, sizeof(char) * BUFFER_SIZE);
-                    int num_read = read(ci->fd, read_buf, BUFFER_SIZE);
+                    memset(recv_buffer, 0, sizeof(char) * BUFFER_SIZE);
+                    int num_read = read(ci->fd, recv_buffer, BUFFER_SIZE);
                     if (num_read < 0) {
                         perror("read");
                         exit(1);
-                    } // if
-                    fprintf(stderr, "Read from client: %s\n", read_buf);
-                    ev_ret[i].events = EPOLLIN | EPOLLONESHOT;
-                    if (epoll_ctl(epfd, EPOLL_CTL_MOD, ci->fd, &ev_ret[i]) < 0) {
-                        perror("epoll_ctl");
-                        exit(1);
-                    } // if
+                    } else if (num_read == 0) { // Connection is closed
+                        fprintf(stderr, "Closed connection: fd=%d\n", ci->fd);
+                        chat_data_set(&send_data, CHAT_REMOVE_MEMBER, find_user(users, ci->fd));
+                        broadcast_to_users(users, &send_data, send_buffer);
+                        remove_user(users, ci->fd);
+                        if (epoll_ctl(epfd, EPOLL_CTL_DEL, ci->fd, &ev_ret[i]) < 0) {
+                           perror("epoll_ctl_del");
+                           exit(1);
+                        } // if
+                        continue;
+                    } // else if
+                    fprintf(stderr, "Read from client: fd=%d\n", ci->fd);
+                    chat_data_deserialize(&recv_data, recv_buffer);
+                    chat_user *user = find_user(users, ci->fd);
+                    pack_recv_data_to_send_data(&send_data, &recv_data, user);
+                    broadcast_to_users(users, &send_data, send_buffer);
+                    fprintf(stderr, "Message (time: %s): %s\n", recv_data.time_str, recv_data.buffer);
                 } // if
             } // else
         } // for
@@ -171,7 +185,7 @@ int main(int argc, char *argv[]) {
     int backlog;
 
     cvector *server_socks = cvector_init(sizeof(int), SERVER_SOCK_SIZE);
-    cvector *client_socks = cvector_init(sizeof(int), INITIAL_CLIENT_SOCK_SIZE);
+    cvector *users = cvector_init(sizeof(chat_user), INITIAL_CLIENT_SOCK_SIZE);
 
     // Read commandline arguments
     if (argc < 2) {
@@ -195,8 +209,8 @@ int main(int argc, char *argv[]) {
 
     int ret = init_server_sockets(port, backlog, server_socks);
 
-    server_loop(server_socks, client_socks);
+    server_loop(server_socks, users);
 
-    cvector_free(client_socks);
+    cvector_free(users);
     cvector_free(server_socks);
 } // main
